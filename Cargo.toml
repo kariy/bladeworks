@@ -6,4 +6,8 @@ members = ["context", "db", "runtime", "rpc"]
 version = "0.1.0"
 edition = "2021"
 
-[workspace.depedencies]
+[workspace.dependencies]
+bladeworks-context = { path = "context" }
+bladeworks-db = { path = "db" }
+bladeworks-runtime = { path = "runtime" }
+bladeworks-rpc = { path = "rpc" }

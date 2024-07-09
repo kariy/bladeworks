@@ -373,7 +373,10 @@ version = "0.1.0"
 name = "bladeworks-db"
 version = "0.1.0"
 dependencies = [
+ "bladeworks-context",
  "katana-db",
+ "katana-primitives",
+ "katana-provider",
 ]
 
 [[package]]
