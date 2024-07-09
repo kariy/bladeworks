@@ -1,0 +1,7 @@
+[package]
+name = "bladeworks-rpc"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+jsonrpsee = "0.24.0"
