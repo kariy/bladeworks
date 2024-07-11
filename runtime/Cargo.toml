@@ -1,7 +1,9 @@
 [package]
+edition.workspace = true
 name = "bladeworks-runtime"
 version.workspace = true
-edition.workspace = true
 
 [dependencies]
-katana-executor = { git = "https://github.com/dojoengine/dojo", tag = "v1.0.0-alpha.0" }
+katana-executor.workspace = true
+katana-primitives.workspace = true
+katana-provider.workspace = true

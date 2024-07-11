@@ -1,13 +1,28 @@
 [workspace]
-resolver = "2"
 members = ["context", "db", "runtime", "rpc"]
+resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
 edition = "2021"
+version = "0.1.0"
 
 [workspace.dependencies]
 bladeworks-context = { path = "context" }
 bladeworks-db = { path = "db" }
-bladeworks-runtime = { path = "runtime" }
 bladeworks-rpc = { path = "rpc" }
+bladeworks-runtime = { path = "runtime" }
+
+katana-db = { path = "../../work/dojoengine/dojo/crates/katana/storage/db", features = [
+    "test-utils",
+] }
+katana-executor = { path = "../../work/dojoengine/dojo/crates/katana/executor" }
+katana-primitives = { path = "../../work/dojoengine/dojo/crates/katana/primitives" }
+katana-provider = { path = "../../work/dojoengine/dojo/crates/katana/storage/provider" }
+
+[patch.crates-io]
+# Remove this patch once the following PR is merged: <https://github.com/xJonathanLEI/starknet-rs/pull/615>
+#
+# To enable std feature on `starknet-types-core`.
+# To re-export the entire `felt` module from `starknet-types-core`.
+starknet-core = { git = "https://github.com/kariy/starknet-rs", branch = "dojo-patch" }
+starknet-types-core = { git = "https://github.com/dojoengine/types-rs", rev = "289e2f0" }

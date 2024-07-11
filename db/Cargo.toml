@@ -1,10 +1,10 @@
 [package]
+edition.workspace = true
 name = "bladeworks-db"
 version.workspace = true
-edition.workspace = true
 
 [dependencies]
 bladeworks-context.workspace = true
-katana-db = { git = "https://github.com/dojoengine/dojo", tag = "v1.0.0-alpha.0" }
-katana-provider = { git = "https://github.com/dojoengine/dojo", tag = "v1.0.0-alpha.0" }
-katana-primitives = { git = "https://github.com/dojoengine/dojo", tag = "v1.0.0-alpha.0" }
+katana-db.workspace = true
+katana-primitives.workspace = true
+katana-provider.workspace = true

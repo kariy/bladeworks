@@ -1,3 +1,3 @@
 pub struct Ctx {
-    tenant_id: u64,
+    pub tenant_id: u64,
 }
