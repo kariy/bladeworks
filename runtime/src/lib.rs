@@ -2,6 +2,7 @@ mod context;
 mod executor;
 mod task;
 
+use anyhow::Result;
 use bladeworks_db::Db;
 use context::{Ctx, TenantConfig};
 use executor::Executor;
@@ -61,7 +62,7 @@ impl Runtime {
         let inner = Arc::new(Inner {
             pool: Default::default(),
             pending_tasks: Default::default(),
-            db: Db::init("./db").expect("failed to initialize database"),
+            db: Db::init("./db-dir").expect("failed to initialize database"),
             configs: Default::default(),
         });
 
@@ -97,6 +98,13 @@ impl Runtime {
         Runtime { inner }
     }
 
+    // add tenant configuration and initialie the tenant's db
+    pub fn add_tenant(&self, tenant_id: u8, config: TenantConfig) -> Result<()> {
+        self.inner.configs.lock().insert(tenant_id, config);
+        self.inner.db.create_tenant(tenant_id)?;
+        Ok(())
+    }
+
     pub fn spawn(&self, task: AddTask) -> JoinHandle<ExecutionTaskResult> {
         let (_result, rx) = oneshot::channel();
 
@@ -126,8 +134,10 @@ impl Runtime {
 #[tokio::test]
 async fn main() {
     let runtime = Runtime::new(4);
+    runtime.add_tenant(1, TenantConfig::default()).unwrap();
     let handle = runtime.spawn(AddTask::default());
     let result = handle.await;
+    println!("Result: {result:?}");
 }
 
 // Runtime should must be connected to the database in order to create the appropriate state provider based on the execution context
@@ -136,3 +146,8 @@ async fn main() {
 
 // The runtime should handle bookkeeping of what tenant is occupying which thread, so that when a new task belong the same tenant is
 // spawned, it can be assigned to that worker thread.
+
+// the runtime isn't restricted to only allowing fixed number of tenants, it can be dynamic, but the number of worker threads should
+// be fixed depending on the resource allocations. so as to ntot oversubsribe the resources.
+
+// tenant id should be based on the deployment name, eg the k8s namespace

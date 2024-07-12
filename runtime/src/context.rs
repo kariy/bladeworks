@@ -23,6 +23,7 @@ pub struct Ctx
 ///
 /// This represents the deployment-speficic configuration when creating
 /// a new Slot instance.
+#[derive(Debug, Default)]
 pub struct TenantConfig {
     pub block_time: u64,
 }

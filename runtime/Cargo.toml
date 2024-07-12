@@ -4,6 +4,7 @@ name = "bladeworks-runtime"
 version.workspace = true
 
 [dependencies]
+anyhow = "1.0.86"
 bladeworks-db.workspace = true
 
 eyre = "0.6.12"

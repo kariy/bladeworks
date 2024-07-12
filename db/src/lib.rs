@@ -22,6 +22,7 @@ struct Inner<D: Database> {
 }
 
 impl<D: Database> Db<D> {
+    // createa a provider for the given tenant
     pub fn provider(&self, tenant: u8) -> Result<Option<DbProvider<D::Tx>>, DatabaseError> {
         let dbs = self.inner.databases.lock();
         let Some(env) = dbs.get(&tenant) else {
@@ -30,6 +31,7 @@ impl<D: Database> Db<D> {
         Ok(Some(DbProvider::new(env.tx()?)))
     }
 
+    // create a mutable provider for the given tenant
     pub fn provider_mut(&self, tenant: u8) -> Result<Option<DbProvider<D::TxMut>>, DatabaseError> {
         let dbs = self.inner.databases.lock();
         let Some(env) = dbs.get(&tenant) else {
@@ -59,13 +61,13 @@ impl Db<mdbx::DbEnv> {
         })
     }
 
-    pub fn create_tenant(&mut self, tenant: u8) -> Result<()> {
+    pub fn create_tenant(&self, tenant: u8) -> Result<()> {
         let path = self.inner.root_path.join(tenant.to_string());
         self.inner.databases.lock().insert(tenant, init_db(path)?);
         Ok(())
     }
 
-    pub fn drop_tenant(&mut self, tenant: u8) -> Result<()> {
+    pub fn drop_tenant(&self, tenant: u8) -> Result<()> {
         // get the path to the tenant's database directory
         let path = self.inner.root_path.join(tenant.to_string());
         self.inner.databases.lock().remove(&tenant);

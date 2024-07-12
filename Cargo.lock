@@ -392,6 +392,7 @@ dependencies = [
 name = "bladeworks-runtime"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bladeworks-db",
  "eyre",
  "futures-util",
