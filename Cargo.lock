@@ -394,6 +394,7 @@ version = "0.1.0"
 dependencies = [
  "bladeworks-db",
  "eyre",
+ "futures-util",
  "katana-db",
  "katana-executor",
  "katana-primitives",
