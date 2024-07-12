@@ -4,6 +4,7 @@ name = "bladeworks-db"
 version.workspace = true
 
 [dependencies]
+anyhow = "1.0.86"
 bladeworks-context.workspace = true
 katana-db.workspace = true
 katana-primitives.workspace = true
