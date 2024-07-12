@@ -1,100 +1,43 @@
-pub mod provider;
+pub mod schema;
 
-use bladeworks_context::Ctx;
-use katana_db::codecs::{Compress, Encode};
-use katana_db::error::DatabaseError;
-use katana_db::mdbx;
-use katana_db::mdbx::libmdbx::ffi::DBI;
-use katana_db::mdbx::libmdbx::TransactionKind;
-use katana_db::mdbx::libmdbx::RW;
-
-use katana_db::mdbx::DbEnv;
-use katana_db::tables;
-use katana_db::tables::Table;
-use katana_primitives::{
-    class::ClassHash,
-    contract::{ContractAddress, Nonce, StorageKey, StorageValue},
+use katana_db::{
+    abstraction::DbTx,
+    codecs::Encode,
+    error::DatabaseError,
+    mdbx::{libmdbx::TransactionKind, DbEnv},
+    tables::Table,
 };
-use katana_provider::{traits::state::StateProvider, ProviderResult};
+use katana_provider::traits::{Provider, ProviderMut};
 
-use std::str::FromStr;
+struct Db {
+    env: DbEnv,
+}
 
-pub struct Db<K: TransactionKind>(Tx<K>);
+impl Db {
+    fn provider(&self, tenant: u64) -> Box<dyn Provider> {
+        todo!()
+    }
 
-pub struct Tx<K: TransactionKind> {
-    ctx: Ctx,
-    inner: katana_db::mdbx::tx::Tx<K>,
+    fn provider_mut(&self, tenant: u64) -> Box<dyn ProviderMut> {
+        todo!()
+    }
+}
+
+struct Tx<K: TransactionKind> {
+    tenant: u64,
+    tx: katana_db::mdbx::tx::Tx<K>,
 }
 
 impl<K: TransactionKind> Tx<K> {
-    pub fn new(inner: katana_db::mdbx::tx::Tx<K>, ctx: Ctx) -> Self {
-        Self { inner, ctx }
-    }
-
-    fn tenant_key<T: AsRef<[u8]>>(&self, key: T) -> Vec<u8> {
-        let mut tenant_key = self.ctx.tenant_id.to_be_bytes().to_vec();
-        tenant_key.extend_from_slice(key.as_ref());
-        tenant_key
-    }
-
-    pub fn cursor<T: Table>(&self) -> Result<katana_db::mdbx::cursor::Cursor<K, T>, DatabaseError> {
-        self.inner.cursor::<T>()
-    }
-
-    pub fn get_dbi<T: Table>(&self) -> Result<DBI, DatabaseError> {
-        self.inner.get_dbi::<T>()
-    }
-
-    pub fn get<T: Table>(&self, key: T::Key) -> Result<Option<<T as Table>::Value>, DatabaseError> {
-        let tenant_key = self.tenant_key(Encode::encode(key));
-        self.inner
-            .inner
-            .get(self.inner.get_dbi::<T>()?, tenant_key.as_ref())
-            .map_err(DatabaseError::Read)?
-            .map(decode_one::<T>)
-            .transpose()
-    }
-
-    pub fn entries<T: Table>(&self) -> Result<usize, DatabaseError> {
-        self.inner.entries::<T>()
-    }
-
-    pub fn commit(self) -> Result<bool, DatabaseError> {
-        self.inner.commit()
+    fn new(tenant: u64, tx: katana_db::mdbx::tx::Tx<K>) -> Self {
+        Self { tenant, tx }
     }
 }
 
-impl<K: TransactionKind> Db<K> {
-    pub fn new(tx: katana_db::mdbx::tx::Tx<K>, ctx: Ctx) -> Self {
-        Self(Tx::new(tx, ctx))
-    }
-}
-
-impl Tx<RW> {
-    pub fn put<T: Table>(&self, key: T::Key, value: T::Value) -> Result<(), DatabaseError> {
-        let key = key.encode();
-        let value = value.compress();
-        self.inner
-            .put(self.get_dbi::<T>()?, key, value, WriteFlags::UPSERT)
-            .unwrap();
-        Ok(())
-    }
-
-    pub fn delete<T: Table>(
-        &self,
-        key: T::Key,
-        value: Option<T::Value>,
-    ) -> Result<bool, DatabaseError> {
-        let tenant_key = self.tenant_key(Encode::encode(key));
-        self.inner.delete::<T>(tenant_key, value)
-    }
-
-    pub fn clear<T: Table>(&self) -> Result<(), DatabaseError> {
-        self.inner.clear::<T>()
-    }
-
-    pub fn abort(self) {
-        self.inner.abort()
+impl<K: TransactionKind> DbTx for Tx<K> {
+    fn get<T: Table>(&self, key: T::Key) -> Result<Option<T::Value>, DatabaseError> {
+        let key = self.tenant_key::<T>(key);
+        todo!()
     }
 }
 
