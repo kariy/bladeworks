@@ -1,5 +1,5 @@
 [workspace]
-members = ["context", "db", "runtime", "rpc"]
+members = [ "context", "db", "runtime", "rpc" ]
 resolver = "2"
 
 [workspace.package]
@@ -9,12 +9,8 @@ version = "0.1.0"
 [workspace.dependencies]
 bladeworks-context = { path = "context" }
 bladeworks-db = { path = "db" }
-bladeworks-rpc = { path = "rpc" }
-bladeworks-runtime = { path = "runtime" }
 
-katana-db = { path = "../../work/dojoengine/dojo/crates/katana/storage/db", features = [
-    "test-utils",
-] }
+katana-db = { path = "../../work/dojoengine/dojo/crates/katana/storage/db", features = [ "test-utils" ] }
 katana-executor = { path = "../../work/dojoengine/dojo/crates/katana/executor" }
 katana-primitives = { path = "../../work/dojoengine/dojo/crates/katana/primitives" }
 katana-provider = { path = "../../work/dojoengine/dojo/crates/katana/storage/provider" }
