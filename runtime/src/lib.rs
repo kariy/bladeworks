@@ -2,7 +2,6 @@ mod context;
 mod task;
 
 use bladeworks_db::Db;
-use katana_db::abstraction::Database;
 use katana_db::mdbx;
 use katana_executor::implementation::noop::NoopExecutorFactory;
 use katana_executor::ExecutorFactory;
@@ -13,10 +12,9 @@ use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread::{self, sleep, Thread};
-use std::time::Duration;
 use tokio::sync::oneshot;
 
-struct JoinHandle {
+pub struct JoinHandle {
     rx: oneshot::Receiver<()>,
 }
 
@@ -25,41 +23,42 @@ struct Task {
     tx: oneshot::Sender<()>,
 }
 
-#[derive(Default)]
 struct Inner {
     db: Db<mdbx::DbEnv>,
     pool: Mutex<Vec<Thread>>,
     pending_tasks: Mutex<VecDeque<Task>>,
 }
 
-struct Runtime {
+pub struct Runtime {
     // database: Db,
     inner: Arc<Inner>,
 }
 
 impl Runtime {
-    fn new(worker_threads: usize) -> Self {
-        let inner = Arc::new(Inner::default());
+    pub fn new(worker_threads: usize) -> Self {
+        let inner = Arc::new(Inner {
+            pool: Default::default(),
+            pending_tasks: Default::default(),
+            db: Db::init("./db").expect("failed to initialize database"),
+        });
 
         for _ in 0..worker_threads {
             let inner = inner.clone();
 
             thread::spawn(move || {
-                // check if there are any pending tasks
-                // if there are, pop one and execute it
-                // if there are none, park the thread
                 loop {
                     while let Some(task) = inner.pending_tasks.lock().pop_back() {
                         // create execution context
                         let provider = inner.db.provider(0).unwrap().unwrap();
-                        let env = BlockEnv::default();
+                        let block_env = BlockEnv::default();
                         let state = provider.latest().unwrap();
 
                         // execute tasks
                         let factory = NoopExecutorFactory::new();
-                        let mut executor = factory.with_state_and_block_env(state, env);
+                        let mut executor = factory.with_state_and_block_env(state, block_env);
                         executor.execute_transactions(Vec::new()).unwrap();
 
+                        // send back the execution result
                         task.tx.send(()).unwrap();
                     }
 
@@ -73,7 +72,7 @@ impl Runtime {
         Runtime { inner }
     }
 
-    fn spawn(&self, message: &str) -> JoinHandle {
+    pub fn spawn(&self, message: &str) -> JoinHandle {
         let (tx, rx) = oneshot::channel();
 
         // create the task

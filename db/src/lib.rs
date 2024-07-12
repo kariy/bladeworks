@@ -33,8 +33,9 @@ impl<D: Database> Db<D> {
 }
 
 impl Db<mdbx::DbEnv> {
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn init<P: AsRef<Path>>(path: P) -> Result<Self> {
         let root_path = path.as_ref().to_path_buf();
+        std::fs::create_dir_all(&root_path)?;
         let mut databases = HashMap::new();
 
         for entry in root_path.read_dir()? {
@@ -49,18 +50,6 @@ impl Db<mdbx::DbEnv> {
         })
     }
 
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let root_path = path.as_ref().to_path_buf();
-        let databases = HashMap::new();
-
-        std::fs::create_dir_all(&root_path)?;
-
-        Ok(Self {
-            databases,
-            root_path,
-        })
-    }
-
     pub fn create_tenant(&mut self, tenant: u8) -> Result<()> {
         let path = self.root_path.join(tenant.to_string());
         self.databases.insert(tenant, init_db(path)?);
@@ -68,6 +57,7 @@ impl Db<mdbx::DbEnv> {
     }
 
     pub fn drop_tenant(&mut self, tenant: u8) -> Result<()> {
+        // get the path to the tenant's database directory
         let path = self.root_path.join(tenant.to_string());
         self.databases.remove(&tenant);
         std::fs::remove_dir_all(path)?;

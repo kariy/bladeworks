@@ -1,11 +1,15 @@
+use katana_primitives::env::CfgEnv;
 use katana_provider::traits::state::StateProvider;
 
-pub struct Context<P>
+/// The task execution context.
+pub struct Ctx<P>
 where
     P: StateProvider,
 {
-    // context id
-    id: u64,
+    // the tenant id of this context
+    tenant: u8,
     // state provider
     provider: P,
+    // the chain configuration
+    cfg: CfgEnv,
 }
