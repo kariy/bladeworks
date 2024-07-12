@@ -1,33 +1,40 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 
 use anyhow::Result;
 use katana_db::{abstraction::Database, error::DatabaseError};
 use katana_db::{init_db, mdbx};
 use katana_provider::providers::db::DbProvider;
+use parking_lot::Mutex;
 
 #[derive(Debug)]
 pub struct Db<D: Database> {
+    inner: Arc<Inner<D>>,
+}
+
+#[derive(Debug)]
+struct Inner<D: Database> {
     // mapping from tenant id to their database environment
-    databases: HashMap<u8, D>,
+    databases: Mutex<HashMap<u8, D>>,
     // path to the root directory containing the tenant databases
     root_path: PathBuf,
 }
 
 impl<D: Database> Db<D> {
     pub fn provider(&self, tenant: u8) -> Result<Option<DbProvider<D::Tx>>, DatabaseError> {
-        let Some(env) = self.databases.get(&tenant) else {
+        let dbs = self.inner.databases.lock();
+        let Some(env) = dbs.get(&tenant) else {
             return Ok(None);
         };
-
         Ok(Some(DbProvider::new(env.tx()?)))
     }
 
     pub fn provider_mut(&self, tenant: u8) -> Result<Option<DbProvider<D::TxMut>>, DatabaseError> {
-        let Some(env) = self.databases.get(&tenant) else {
+        let dbs = self.inner.databases.lock();
+        let Some(env) = dbs.get(&tenant) else {
             return Ok(None);
         };
-
         Ok(Some(DbProvider::new(env.tx_mut()?)))
     }
 }
@@ -45,21 +52,23 @@ impl Db<mdbx::DbEnv> {
         }
 
         Ok(Self {
-            databases,
-            root_path,
+            inner: Arc::new(Inner {
+                root_path,
+                databases: Mutex::new(databases),
+            }),
         })
     }
 
     pub fn create_tenant(&mut self, tenant: u8) -> Result<()> {
-        let path = self.root_path.join(tenant.to_string());
-        self.databases.insert(tenant, init_db(path)?);
+        let path = self.inner.root_path.join(tenant.to_string());
+        self.inner.databases.lock().insert(tenant, init_db(path)?);
         Ok(())
     }
 
     pub fn drop_tenant(&mut self, tenant: u8) -> Result<()> {
         // get the path to the tenant's database directory
-        let path = self.root_path.join(tenant.to_string());
-        self.databases.remove(&tenant);
+        let path = self.inner.root_path.join(tenant.to_string());
+        self.inner.databases.lock().remove(&tenant);
         std::fs::remove_dir_all(path)?;
         Ok(())
     }

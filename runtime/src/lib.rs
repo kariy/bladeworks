@@ -3,7 +3,7 @@ mod task;
 
 use bladeworks_db::Db;
 use katana_db::mdbx;
-use katana_executor::implementation::noop::NoopExecutorFactory;
+use katana_executor::implementation::blockifier::BlockifierFactory;
 use katana_executor::ExecutorFactory;
 use katana_primitives::env::BlockEnv;
 use katana_primitives::transaction::ExecutableTxWithHash;
@@ -30,7 +30,6 @@ struct Inner {
 }
 
 pub struct Runtime {
-    // database: Db,
     inner: Arc<Inner>,
 }
 
@@ -54,7 +53,7 @@ impl Runtime {
                         let state = provider.latest().unwrap();
 
                         // execute tasks
-                        let factory = NoopExecutorFactory::new();
+                        let factory = BlockifierFactory::new(cfg, flags);
                         let mut executor = factory.with_state_and_block_env(state, block_env);
                         executor.execute_transactions(Vec::new()).unwrap();
 

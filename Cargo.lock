@@ -378,6 +378,7 @@ dependencies = [
  "katana-db",
  "katana-primitives",
  "katana-provider",
+ "parking_lot 0.12.3",
 ]
 
 [[package]]

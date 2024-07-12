@@ -1,3 +1,4 @@
+use katana_executor::SimulationFlag;
 use katana_primitives::env::CfgEnv;
 use katana_provider::traits::state::StateProvider;
 
@@ -10,6 +11,8 @@ where
     tenant: u8,
     // state provider
     provider: P,
+    /// execution flags for the executor
+    execution_flags: SimulationFlag,
     // the chain configuration
     cfg: CfgEnv,
 }
