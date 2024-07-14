@@ -1,3 +1,17 @@
+// Runtime should must be connected to the database in order to create the appropriate state provider based on the execution context
+
+// Should be able to 'await' on the individual task execution, so that we can use it for `fee estimation` and `simulation` purposes
+
+// The runtime should handle bookkeeping of what tenant is occupying which thread, so that when a new task belong the same tenant is
+// spawned, it can be assigned to that worker thread.
+
+// the runtime isn't restricted to only allowing fixed number of tenants, it can be dynamic, but the number of worker threads should
+// be fixed depending on the resource allocations. so as to ntot oversubsribe the resources.
+
+// tenant id should be based on the deployment name, eg the k8s namespace
+
+// current implementation is only limited to performing like instant mining mode in normal Katana.
+
 mod block_producer;
 mod context;
 mod state;
@@ -95,10 +109,6 @@ impl Runtime {
                                 lock.get(&ctx.tenant).expect("tenant's backend not found");
                             let provider = backend.blockchain.provider();
 
-                            // execute tasks
-                            let factory =
-                                BlockifierFactory::new(CfgEnv::default(), SimulationFlag::new());
-
                             // create execution context
                             let latest_hash = provider.latest_hash().unwrap();
                             let latest_state = provider.latest().unwrap();
@@ -109,7 +119,7 @@ impl Runtime {
                             block_env.number += 1;
                             block_env.timestamp = get_current_timestamp().as_secs();
 
-                            let mut executor = factory.with_state(latest_state);
+                            let mut executor = backend.executor_factory.with_state(latest_state);
 
                             let block = ExecutableBlock {
                                 body: transactions,
@@ -143,6 +153,8 @@ impl Runtime {
                     }
                 })
                 .expect("failed to create worker thread");
+
+            tracing::info!(thread = %i, "Worker thread started");
         }
 
         Runtime { inner }
@@ -166,6 +178,8 @@ impl Runtime {
         JoinHandle(rx)
     }
 
+    // TODO: if there is a worker thread that is execuing a task for the same tenant, we should
+    // wake up only that thread so that it can pick up the new task.
     fn wake(&self) {
         // unpark an available thread from the pool
         if let Some(thread) = self.inner.pool.lock().pop() {
@@ -184,12 +198,33 @@ mod tests {
         env::get_default_vm_resource_fee_cost,
     };
     use katana_executor::implementation::blockifier::BlockifierFactory;
+    use katana_primitives::felt::FieldElement;
     use katana_primitives::{
         chain::ChainId,
         env::{CfgEnv, FeeTokenAddressses},
         genesis::constant::DEFAULT_FEE_TOKEN_ADDRESS,
+        transaction::{InvokeTx, InvokeTxV1},
     };
+    use starknet::macros::{felt, selector};
     use tracing_subscriber::{fmt, EnvFilter};
+
+    fn tx() -> ExecutableTxWithHash {
+        let invoke = InvokeTx::V1(InvokeTxV1 {
+            sender_address: felt!("0x1").into(),
+            calldata: vec![
+                DEFAULT_FEE_TOKEN_ADDRESS.into(),
+                selector!("transfer"),
+                FieldElement::THREE,
+                felt!("0x100"),
+                FieldElement::ONE,
+                FieldElement::ZERO,
+            ],
+            max_fee: 10_000,
+            ..Default::default()
+        });
+
+        ExecutableTxWithHash::new(invoke.into())
+    }
 
     async fn create_tenants_backend() -> HashMap<u8, Arc<Backend<BlockifierFactory>>> {
         let mut backends = HashMap::new();
@@ -217,7 +252,13 @@ mod tests {
             let mut starknet_config = StarknetConfig::default();
             starknet_config.db_dir = Some(format!("./db/{i}").into());
 
-            let executor_factory = BlockifierFactory::new(cfg_env, SimulationFlag::default());
+            let flag = SimulationFlag {
+                skip_fee_transfer: true,
+                skip_validate: true,
+                ..Default::default()
+            };
+
+            let executor_factory = BlockifierFactory::new(cfg_env, flag);
             let backend = Backend::new(Arc::new(executor_factory), starknet_config).await;
             backends.insert(i as u8, Arc::new(backend));
         }
@@ -239,10 +280,19 @@ mod tests {
 
         tracing::subscriber::set_global_default(subscriber)?;
 
+        // Configure the runtiem with the specified number of worker threads and tenants
+        // This basically means that the runtime will have 4 worker threads and will be able to handle requests from 4 different tenants
+        // in parallel.
         let backends = create_tenants_backend().await;
         let runtime = Runtime::new(4, backends);
 
-        let handle = runtime.spawn(AddTask::default());
+        let handle = runtime.spawn(AddTask {
+            tenant_id: 0,
+            transactions: vec![tx()],
+        });
+        // let _ = runtime.spawn(AddTask::default());
+        // let _ = runtime.spawn(AddTask::default());
+
         let result = handle.await;
 
         println!("Result: {result:?}");
@@ -250,15 +300,3 @@ mod tests {
         Ok(())
     }
 }
-
-// Runtime should must be connected to the database in order to create the appropriate state provider based on the execution context
-
-// Should be able to 'await' on the individual task execution, so that we can use it for `fee estimation` and `simulation` purposes
-
-// The runtime should handle bookkeeping of what tenant is occupying which thread, so that when a new task belong the same tenant is
-// spawned, it can be assigned to that worker thread.
-
-// the runtime isn't restricted to only allowing fixed number of tenants, it can be dynamic, but the number of worker threads should
-// be fixed depending on the resource allocations. so as to ntot oversubsribe the resources.
-
-// tenant id should be based on the deployment name, eg the k8s namespace

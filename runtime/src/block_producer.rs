@@ -50,6 +50,7 @@ type KatanaBlockProducer = katana_core::service::block_producer::BlockProducer<B
 //     }
 // }
 
+#[derive(Debug)]
 struct Request {
     tenant: u8,
     env: BlockEnv,
@@ -75,7 +76,6 @@ struct BlockProducerService {
 }
 
 pub struct BlockProducer(Mutex<Sender<Request>>);
-
 impl BlockProducer {
     pub fn new(
         // db: Db,
@@ -102,7 +102,10 @@ impl BlockProducer {
         // spawn the service in a separate thread
         std::thread::Builder::new()
             .name("block-producer".into())
-            .spawn(move || tokio_rt.block_on(service))
+            .spawn(move || {
+                tracing::info!("Block producer service started");
+                tokio_rt.block_on(service)
+            })
             .expect("failed to create block producer background thread");
 
         Self(Mutex::new(tx))
@@ -150,6 +153,7 @@ impl Future for BlockProducerService {
             loop {
                 match Pin::new(&mut this.rx).poll_next(cx) {
                     Poll::Ready(Some(req)) => {
+                        tracing::info!(request = ?req, "Received block production request");
                         this.queued_requests.push(req);
                     }
 

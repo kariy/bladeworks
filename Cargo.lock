@@ -424,6 +424,7 @@ dependencies = [
  "katana-provider",
  "katana-tasks",
  "parking_lot 0.12.3",
+ "starknet",
  "tokio",
  "tracing",
  "tracing-subscriber",
