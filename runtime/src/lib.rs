@@ -30,6 +30,7 @@ use std::task::{Context, Poll};
 use std::thread::{self, Thread};
 use task::AddTask;
 use tokio::sync::oneshot;
+use tracing_subscriber::{fmt, EnvFilter};
 
 type ExecutionTaskResult = ExecutorResult<()>;
 
@@ -217,16 +218,31 @@ mod tests {
                 },
             };
 
+            let mut starknet_config = StarknetConfig::default();
+            starknet_config.db_dir = Some(format!("./db/{i}").into());
+
             let executor_factory = BlockifierFactory::new(cfg_env, SimulationFlag::default());
-            let backend = Backend::new(Arc::new(executor_factory), StarknetConfig::default()).await;
+            let backend = Backend::new(Arc::new(executor_factory), starknet_config).await;
             backends.insert(i as u8, Arc::new(backend));
         }
 
         backends
     }
 
+    const DEFAULT_LOG_FILTER: &str = "info,executor=trace,forking::backend=trace,server=debug,\
+                                      katana_core=trace,blockifier=off,jsonrpsee_server=off,\
+                                      hyper=off,messaging=debug,node=error";
+
     #[tokio::test]
-    async fn main() {
+    async fn main() -> anyhow::Result<()> {
+        let subscriber = fmt::Subscriber::builder()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().or(EnvFilter::try_new(DEFAULT_LOG_FILTER))?,
+            )
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)?;
+
         let backends = create_tenants_backend().await;
         let runtime = Runtime::new(4, backends);
 
@@ -234,6 +250,8 @@ mod tests {
         let result = handle.await;
 
         println!("Result: {result:?}");
+
+        Ok(())
     }
 }
 
