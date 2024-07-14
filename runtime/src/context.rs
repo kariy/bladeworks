@@ -25,5 +25,6 @@ pub struct Ctx
 /// a new Slot instance.
 #[derive(Debug, Default)]
 pub struct TenantConfig {
-    pub block_time: u64,
+    pub block_time: Option<u64>,
+    // TODO: add some block resources limit at which the block will be produced when the limit is reached regardless of the block time.
 }

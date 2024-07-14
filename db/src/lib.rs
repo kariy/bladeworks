@@ -3,14 +3,23 @@ use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 
 use anyhow::Result;
+use katana_db::mdbx::DbEnv;
 use katana_db::{abstraction::Database, error::DatabaseError};
 use katana_db::{init_db, mdbx};
 use katana_provider::providers::db::DbProvider;
 use parking_lot::Mutex;
 
 #[derive(Debug)]
-pub struct Db<D: Database> {
+pub struct Db<D: Database = mdbx::DbEnv> {
     inner: Arc<Inner<D>>,
+}
+
+impl<D: Database> Clone for Db<D> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -21,27 +30,16 @@ struct Inner<D: Database> {
     root_path: PathBuf,
 }
 
-impl<D: Database> Db<D> {
-    // createa a provider for the given tenant
-    pub fn provider(&self, tenant: u8) -> Result<Option<DbProvider<D::Tx>>, DatabaseError> {
-        let dbs = self.inner.databases.lock();
-        let Some(env) = dbs.get(&tenant) else {
-            return Ok(None);
-        };
-        Ok(Some(DbProvider::new(env.tx()?)))
-    }
-
-    // create a mutable provider for the given tenant
-    pub fn provider_mut(&self, tenant: u8) -> Result<Option<DbProvider<D::TxMut>>, DatabaseError> {
-        let dbs = self.inner.databases.lock();
-        let Some(env) = dbs.get(&tenant) else {
-            return Ok(None);
-        };
-        Ok(Some(DbProvider::new(env.tx_mut()?)))
-    }
-}
-
 impl Db<mdbx::DbEnv> {
+    pub fn provider(&self, tenant: u8) -> Result<Option<DbProvider<mdbx::DbEnv>>, DatabaseError> {
+        let dbs = self.inner.databases.lock();
+        let env = dbs.get(&tenant);
+        match env {
+            Some(env) => Ok(Some(DbProvider::new(env.clone()))),
+            None => Ok(None),
+        }
+    }
+
     pub fn init<P: AsRef<Path>>(path: P) -> Result<Self> {
         let root_path = path.as_ref().to_path_buf();
         std::fs::create_dir_all(&root_path)?;

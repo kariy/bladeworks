@@ -1,18 +1,25 @@
+mod block_producer;
 mod context;
-mod executor;
+mod state;
 mod task;
 
 use anyhow::Result;
 use bladeworks_db::Db;
+use block_producer::BlockProducer;
 use context::{Ctx, TenantConfig};
-use executor::Executor;
 use futures_util::future::FutureExt;
+use katana_core::backend::Backend;
+use katana_core::utils::get_current_timestamp;
 use katana_db::mdbx;
 use katana_executor::implementation::blockifier::BlockifierFactory;
 use katana_executor::implementation::noop::NoopExecutorFactory;
-use katana_executor::{BlockExecutor, ExecutorFactory, ExecutorResult};
-use katana_primitives::env::BlockEnv;
+use katana_executor::{BlockExecutor, ExecutorFactory, ExecutorResult, SimulationFlag};
+use katana_primitives::block::{BlockHashOrNumber, ExecutableBlock, PartialHeader};
+use katana_primitives::env::{BlockEnv, CfgEnv};
 use katana_primitives::transaction::ExecutableTxWithHash;
+use katana_primitives::version::CURRENT_STARKNET_VERSION;
+use katana_provider::traits::block::BlockHashProvider;
+use katana_provider::traits::env::BlockEnvProvider;
 use katana_provider::traits::state::{StateFactoryProvider, StateProvider};
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
@@ -45,12 +52,13 @@ struct WorkerTask<T> {
 }
 
 struct Inner {
-    db: Db<mdbx::DbEnv>,
+    // db: Db<mdbx::DbEnv>,
     /// The available worker-threads pool. a thread is removed from the pool
     /// when it is busy executing a task.
     pool: Mutex<Vec<Thread>>,
-    configs: Mutex<HashMap<u8, TenantConfig>>,
+    backends: Mutex<HashMap<u8, Arc<Backend<BlockifierFactory>>>>,
     pending_tasks: Mutex<VecDeque<WorkerTask<ExecutionTaskResult>>>,
+    block_producer: BlockProducer,
 }
 
 pub struct Runtime {
@@ -58,12 +66,22 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn new(worker_threads: usize) -> Self {
+    pub fn new(
+        worker_threads: usize,
+        backends: HashMap<u8, Arc<Backend<BlockifierFactory>>>,
+    ) -> Self {
+        // let db = Db::init("./db-dir").expect("failed to initialize database");
+        let block_producer = BlockProducer::new(
+            // db.clone(),
+            backends.clone(),
+        );
+
         let inner = Arc::new(Inner {
+            // db,
+            block_producer,
             pool: Default::default(),
+            backends: Mutex::new(backends),
             pending_tasks: Default::default(),
-            db: Db::init("./db-dir").expect("failed to initialize database"),
-            configs: Default::default(),
         });
 
         for _ in 0..worker_threads {
@@ -72,20 +90,57 @@ impl Runtime {
             thread::spawn(move || {
                 loop {
                     while let Some(task) = inner.pending_tasks.lock().pop_back() {
-                        // // create execution context
-                        // let provider = inner.db.provider(0).unwrap().unwrap();
-                        // let block_env = BlockEnv::default();
-                        // let state = provider.latest().unwrap();
+                        let WorkerTask {
+                            ctx,
+                            transactions,
+                            _result,
+                        } = task;
 
-                        // // execute tasks
-                        // let factory = BlockifierFactory::new(cfg, flags);
-                        // let factory = NoopExecutorFactory::new();
-                        // let mut executor = factory.with_state_and_block_env(state, block_env);
-                        let mut executor = Executor;
-                        let result = executor.execute_transactions(task.transactions);
+                        // get the tenant's db provider
+                        let lock = inner.backends.lock();
+                        let backend = lock.get(&ctx.tenant).expect("tenant's backend not found");
+                        let provider = backend.blockchain.provider();
 
-                        // send back the execution result
-                        task._result.send(result).unwrap();
+                        // execute tasks
+                        let factory =
+                            BlockifierFactory::new(CfgEnv::default(), SimulationFlag::new());
+
+                        // create execution context
+                        let latest_hash = provider.latest_hash().unwrap();
+                        let latest_state = provider.latest().unwrap();
+                        let mut block_env =
+                            provider.block_env_at(latest_hash.into()).unwrap().unwrap();
+
+                        // update block env
+                        block_env.number += 1;
+                        block_env.timestamp = get_current_timestamp().as_secs();
+
+                        let mut executor = factory.with_state(latest_state);
+
+                        let block = ExecutableBlock {
+                            body: transactions,
+                            header: PartialHeader {
+                                parent_hash: latest_hash,
+                                number: block_env.number,
+                                timestamp: block_env.timestamp,
+                                version: CURRENT_STARKNET_VERSION,
+                                gas_prices: block_env.l1_gas_prices.clone(),
+                                sequencer_address: block_env.sequencer_address,
+                            },
+                        };
+
+                        let result = executor.execute_block(block);
+                        let output = executor
+                            .take_execution_output()
+                            .expect("failed to get execution output");
+
+                        // send the execution output to the block producer
+                        inner
+                            .block_producer
+                            .add_block_production_task(ctx.tenant, block_env, output);
+
+                        // send the execution result to the join handle
+                        _result.send(result).unwrap();
                     }
 
                     let handle = thread::current();
@@ -96,13 +151,6 @@ impl Runtime {
         }
 
         Runtime { inner }
-    }
-
-    // add tenant configuration and initialie the tenant's db
-    pub fn add_tenant(&self, tenant_id: u8, config: TenantConfig) -> Result<()> {
-        self.inner.configs.lock().insert(tenant_id, config);
-        self.inner.db.create_tenant(tenant_id)?;
-        Ok(())
     }
 
     pub fn spawn(&self, task: AddTask) -> JoinHandle<ExecutionTaskResult> {
@@ -131,13 +179,62 @@ impl Runtime {
     }
 }
 
-#[tokio::test]
-async fn main() {
-    let runtime = Runtime::new(4);
-    runtime.add_tenant(1, TenantConfig::default()).unwrap();
-    let handle = runtime.spawn(AddTask::default());
-    let result = handle.await;
-    println!("Result: {result:?}");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use katana_core::{
+        backend::config::StarknetConfig,
+        constants::{DEFAULT_INVOKE_MAX_STEPS, DEFAULT_VALIDATE_MAX_STEPS, MAX_RECURSION_DEPTH},
+        env::get_default_vm_resource_fee_cost,
+    };
+    use katana_executor::implementation::blockifier::BlockifierFactory;
+    use katana_primitives::{
+        chain::ChainId,
+        env::{CfgEnv, FeeTokenAddressses},
+        genesis::constant::DEFAULT_FEE_TOKEN_ADDRESS,
+    };
+
+    async fn create_tenants_backend() -> HashMap<u8, Arc<Backend<BlockifierFactory>>> {
+        let mut backends = HashMap::new();
+
+        let chains = [
+            ChainId::MAINNET,
+            ChainId::SEPOLIA,
+            ChainId::GOERLI,
+            ChainId::parse("KATANA").unwrap(),
+        ];
+
+        for i in 0..4 {
+            let cfg_env = CfgEnv {
+                chain_id: chains[i],
+                vm_resource_fee_cost: get_default_vm_resource_fee_cost(),
+                invoke_tx_max_n_steps: DEFAULT_INVOKE_MAX_STEPS,
+                validate_max_n_steps: DEFAULT_VALIDATE_MAX_STEPS,
+                max_recursion_depth: MAX_RECURSION_DEPTH,
+                fee_token_addresses: FeeTokenAddressses {
+                    eth: DEFAULT_FEE_TOKEN_ADDRESS,
+                    strk: Default::default(),
+                },
+            };
+
+            let executor_factory = BlockifierFactory::new(cfg_env, SimulationFlag::default());
+            let backend = Backend::new(Arc::new(executor_factory), StarknetConfig::default()).await;
+            backends.insert(i as u8, Arc::new(backend));
+        }
+
+        backends
+    }
+
+    #[tokio::test]
+    async fn main() {
+        let backends = create_tenants_backend().await;
+        let runtime = Runtime::new(4, backends);
+
+        let handle = runtime.spawn(AddTask::default());
+        let result = handle.await;
+
+        println!("Result: {result:?}");
+    }
 }
 
 // Runtime should must be connected to the database in order to create the appropriate state provider based on the execution context

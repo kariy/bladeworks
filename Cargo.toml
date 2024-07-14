@@ -1,5 +1,5 @@
 [workspace]
-members = [ "context", "db", "runtime", "rpc" ]
+members = ["context", "db", "runtime", "rpc"]
 resolver = "2"
 
 [workspace.package]
@@ -10,10 +10,15 @@ version = "0.1.0"
 bladeworks-context = { path = "context" }
 bladeworks-db = { path = "db" }
 
-katana-db = { path = "../../work/dojoengine/dojo/crates/katana/storage/db", features = [ "test-utils" ] }
+katana-tasks = { path = "../../work/dojoengine/dojo/crates/katana/tasks" }
+katana-core = { path = "../../work/dojoengine/dojo/crates/katana/core" }
+katana-db = { path = "../../work/dojoengine/dojo/crates/katana/storage/db", features = [
+    "test-utils",
+] }
 katana-executor = { path = "../../work/dojoengine/dojo/crates/katana/executor" }
 katana-primitives = { path = "../../work/dojoengine/dojo/crates/katana/primitives" }
 katana-provider = { path = "../../work/dojoengine/dojo/crates/katana/storage/provider" }
+tracing = "0.1.40"
 
 [patch.crates-io]
 # Remove this patch once the following PR is merged: <https://github.com/xJonathanLEI/starknet-rs/pull/615>
