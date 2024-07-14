@@ -4,23 +4,20 @@ mod state;
 mod task;
 
 use anyhow::Result;
-use bladeworks_db::Db;
 use block_producer::BlockProducer;
-use context::{Ctx, TenantConfig};
+use context::Ctx;
 use futures_util::future::FutureExt;
 use katana_core::backend::Backend;
 use katana_core::utils::get_current_timestamp;
-use katana_db::mdbx;
 use katana_executor::implementation::blockifier::BlockifierFactory;
-use katana_executor::implementation::noop::NoopExecutorFactory;
-use katana_executor::{BlockExecutor, ExecutorFactory, ExecutorResult, SimulationFlag};
-use katana_primitives::block::{BlockHashOrNumber, ExecutableBlock, PartialHeader};
-use katana_primitives::env::{BlockEnv, CfgEnv};
+use katana_executor::{ExecutorFactory, ExecutorResult, SimulationFlag};
+use katana_primitives::block::{ExecutableBlock, PartialHeader};
+use katana_primitives::env::CfgEnv;
 use katana_primitives::transaction::ExecutableTxWithHash;
 use katana_primitives::version::CURRENT_STARKNET_VERSION;
 use katana_provider::traits::block::BlockHashProvider;
 use katana_provider::traits::env::BlockEnvProvider;
-use katana_provider::traits::state::{StateFactoryProvider, StateProvider};
+use katana_provider::traits::state::StateFactoryProvider;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -30,7 +27,6 @@ use std::task::{Context, Poll};
 use std::thread::{self, Thread};
 use task::AddTask;
 use tokio::sync::oneshot;
-use tracing_subscriber::{fmt, EnvFilter};
 
 type ExecutionTaskResult = ExecutorResult<()>;
 
@@ -53,7 +49,6 @@ struct WorkerTask<T> {
 }
 
 struct Inner {
-    // db: Db<mdbx::DbEnv>,
     /// The available worker-threads pool. a thread is removed from the pool
     /// when it is busy executing a task.
     pool: Mutex<Vec<Thread>>,
@@ -71,84 +66,83 @@ impl Runtime {
         worker_threads: usize,
         backends: HashMap<u8, Arc<Backend<BlockifierFactory>>>,
     ) -> Self {
-        // let db = Db::init("./db-dir").expect("failed to initialize database");
-        let block_producer = BlockProducer::new(
-            // db.clone(),
-            backends.clone(),
-        );
+        let block_producer = BlockProducer::new(backends.clone());
 
         let inner = Arc::new(Inner {
-            // db,
             block_producer,
             pool: Default::default(),
             backends: Mutex::new(backends),
             pending_tasks: Default::default(),
         });
 
-        for _ in 0..worker_threads {
+        for i in 0..worker_threads {
             let inner = inner.clone();
 
-            thread::spawn(move || {
-                loop {
-                    while let Some(task) = inner.pending_tasks.lock().pop_back() {
-                        let WorkerTask {
-                            ctx,
-                            transactions,
-                            _result,
-                        } = task;
+            thread::Builder::new()
+                .name(format!("rt-worker-thread-{i}"))
+                .spawn(move || {
+                    loop {
+                        while let Some(task) = inner.pending_tasks.lock().pop_back() {
+                            let WorkerTask {
+                                ctx,
+                                transactions,
+                                _result,
+                            } = task;
 
-                        // get the tenant's db provider
-                        let lock = inner.backends.lock();
-                        let backend = lock.get(&ctx.tenant).expect("tenant's backend not found");
-                        let provider = backend.blockchain.provider();
+                            // get the tenant's db provider
+                            let lock = inner.backends.lock();
+                            let backend =
+                                lock.get(&ctx.tenant).expect("tenant's backend not found");
+                            let provider = backend.blockchain.provider();
 
-                        // execute tasks
-                        let factory =
-                            BlockifierFactory::new(CfgEnv::default(), SimulationFlag::new());
+                            // execute tasks
+                            let factory =
+                                BlockifierFactory::new(CfgEnv::default(), SimulationFlag::new());
 
-                        // create execution context
-                        let latest_hash = provider.latest_hash().unwrap();
-                        let latest_state = provider.latest().unwrap();
-                        let mut block_env =
-                            provider.block_env_at(latest_hash.into()).unwrap().unwrap();
+                            // create execution context
+                            let latest_hash = provider.latest_hash().unwrap();
+                            let latest_state = provider.latest().unwrap();
+                            let mut block_env =
+                                provider.block_env_at(latest_hash.into()).unwrap().unwrap();
 
-                        // update block env
-                        block_env.number += 1;
-                        block_env.timestamp = get_current_timestamp().as_secs();
+                            // update block env
+                            block_env.number += 1;
+                            block_env.timestamp = get_current_timestamp().as_secs();
 
-                        let mut executor = factory.with_state(latest_state);
+                            let mut executor = factory.with_state(latest_state);
 
-                        let block = ExecutableBlock {
-                            body: transactions,
-                            header: PartialHeader {
-                                parent_hash: latest_hash,
-                                number: block_env.number,
-                                timestamp: block_env.timestamp,
-                                version: CURRENT_STARKNET_VERSION,
-                                gas_prices: block_env.l1_gas_prices.clone(),
-                                sequencer_address: block_env.sequencer_address,
-                            },
-                        };
+                            let block = ExecutableBlock {
+                                body: transactions,
+                                header: PartialHeader {
+                                    parent_hash: latest_hash,
+                                    number: block_env.number,
+                                    timestamp: block_env.timestamp,
+                                    version: CURRENT_STARKNET_VERSION,
+                                    gas_prices: block_env.l1_gas_prices.clone(),
+                                    sequencer_address: block_env.sequencer_address,
+                                },
+                            };
 
-                        let result = executor.execute_block(block);
-                        let output = executor
-                            .take_execution_output()
-                            .expect("failed to get execution output");
+                            let result = executor.execute_block(block);
+                            let output = executor
+                                .take_execution_output()
+                                .expect("failed to get execution output");
 
-                        // send the execution output to the block producer
-                        inner
-                            .block_producer
-                            .add_block_production_task(ctx.tenant, block_env, output);
+                            // send the execution output to the block producer
+                            inner
+                                .block_producer
+                                .add_block_production_task(ctx.tenant, block_env, output);
 
-                        // send the execution result to the join handle
-                        _result.send(result).unwrap();
+                            // send the execution result to the join handle
+                            _result.send(result).unwrap();
+                        }
+
+                        let handle = thread::current();
+                        inner.pool.lock().push(handle);
+                        thread::park();
                     }
-
-                    let handle = thread::current();
-                    inner.pool.lock().push(handle);
-                    thread::park();
-                }
-            });
+                })
+                .expect("failed to create worker thread");
         }
 
         Runtime { inner }
@@ -182,6 +176,7 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use katana_core::{
         backend::config::StarknetConfig,
@@ -194,6 +189,7 @@ mod tests {
         env::{CfgEnv, FeeTokenAddressses},
         genesis::constant::DEFAULT_FEE_TOKEN_ADDRESS,
     };
+    use tracing_subscriber::{fmt, EnvFilter};
 
     async fn create_tenants_backend() -> HashMap<u8, Arc<Backend<BlockifierFactory>>> {
         let mut backends = HashMap::new();

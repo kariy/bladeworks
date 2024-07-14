@@ -102,7 +102,8 @@ impl BlockProducer {
         // spawn the service in a separate thread
         std::thread::Builder::new()
             .name("block-producer".into())
-            .spawn(move || tokio_rt.block_on(service));
+            .spawn(move || tokio_rt.block_on(service))
+            .expect("failed to create block producer background thread");
 
         Self(Mutex::new(tx))
     }
